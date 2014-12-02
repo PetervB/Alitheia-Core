@@ -159,7 +159,7 @@
               <param>mvn:org.apache.felix/org.apache.felix.eventadmin/1.0.0@2</param>
               <param>mvn:eu.sqooss.alitheia/core/0.95-SNAPSHOT@3</param>
           </provision>
-          <runner>1.5.0</runner>
+          <runner>1.8.6</runner>
          </configuration>
       </plugin>
       <plugin>
