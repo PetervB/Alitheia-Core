@@ -37,7 +37,6 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import javax.servlet.Servlet;
 import javax.servlet.ServletException;
@@ -52,18 +51,16 @@ import org.osgi.service.http.NamespaceException;
 
 import eu.sqooss.core.AlitheiaCore;
 import eu.sqooss.service.cluster.ClusterNodeActionException;
-import eu.sqooss.service.cluster.ClusterNodeService;
 import eu.sqooss.service.db.ClusterNode;
 import eu.sqooss.service.db.DBService;
 import eu.sqooss.service.db.StoredProject;
 import eu.sqooss.service.logging.Logger;
-import eu.sqooss.service.updater.UpdaterService;
 
 /**
  * @author George M. Zouganelis
  *
  */
-public class ClusterNodeServiceImpl extends HttpServlet implements ClusterNodeService {
+public abstract class ClusterNodeServiceImpl extends HttpServlet {
     private static final long serialVersionUID = 1L;
 	static final String localServerName;
 	static{
@@ -80,14 +77,13 @@ public class ClusterNodeServiceImpl extends HttpServlet implements ClusterNodeSe
 			
 	}
 
-    private Logger logger = null;
+    protected Logger logger = null;
     private AlitheiaCore core = null;
     private HttpService httpService = null;
     private BundleContext context;
-    private DBService dbs = null;
-    private UpdaterService upds = null;
+    protected DBService dbs = null;
     
-    private ClusterNode thisNode = null;
+    protected ClusterNode thisNode = null;
 
     public ClusterNodeServiceImpl() {}
     
@@ -96,303 +92,20 @@ public class ClusterNodeServiceImpl extends HttpServlet implements ClusterNodeSe
     }
     
     /**
-     * Assign a StoredProject to a ClusterNode
-     * Reasonable causes of failure:
-     *  1.NULL passed server
-     *  2.NULL passed project
-     *  3.Assignment is locked (server is working on project)
-     *  
-     * @param node the cluster node target
-     * @param project stored project to assign 
-     * @return
+     * This is visible for testing, but by lack of guava we can't use
+     * the @visiblefortesting annotation.
      */
-    public boolean assignProject(ClusterNode node, StoredProject project) throws ClusterNodeActionException {
-    	// check if valid server passed
-        if (node==null) {
-    		throw new ClusterNodeActionException("Request to assign a project to a null clusternode");
-    	}
-    	// check if valid project passed
-    	if (project==null) {
-    		throw new ClusterNodeActionException("Request to assign a null project to a clusternode");
-    	}
-
-        try {          
-        	// check if project is already assigned to any ClusterNode
-            ClusterNode assignment = project.getClusternode();
-            if (assignment == null) {
-                // new project assignment
-                logger.info("Assigning project " + project.getName() + " to "
-                        + node.getName());
-                node.getProjects().add(project);
-            } else {
-                logger.info("Moving project " + project.getName() + " from "
-                        + assignment.getName() + " to "
-                        + node.getName());
-                if (assignment.getId() == node.getId()) {
-                    logger.info("No need to move " + project.getName()
-                            + " - Already assigned!");
-                    return true;
-                }
-            }
-        } catch (Exception e) {
-            throw new ClusterNodeActionException("Failed to assign project ["
-                    + project.getName() + "] to clusternode [" + node.getName()
-                    + "]");
-        }
-    	return true;
-    }
-
-    /**
-     * Assign a StoredProject to this ClusterNode
-     * @param project project to assign
-     * @return  
-     */
-    public boolean assignProject(StoredProject project) throws ClusterNodeActionException {
-		try {
-			return assignProject(thisNode, project);
-		} catch (ClusterNodeActionException ex) {
-			throw ex;
-		}
-    }
-
-    /**
-     * Overload for convenience. Use string instead of stored project.
-     * @param projectname project's name to assign
-     */
-    public boolean assignProject(String projectname) throws ClusterNodeActionException {
-    	dbs.startDBSession();
-    	StoredProject project = StoredProject.getProjectByName(projectname);
-    	dbs.rollbackDBSession();
-        if (project == null) {
-            //the project was not found, can't be assign
-        	String errorMessage = "The project [" + projectname + "] was not found"; 
-            logger.warn(errorMessage);
-            throw new ClusterNodeActionException(errorMessage);
-        }
-        try {
-            return assignProject(project);
-        } catch (ClusterNodeActionException ex) {
-        	throw ex;
-        }
-        
+    public ClusterNode getThisNode() {
+    	return thisNode;
     }
     
-    /**
-     * Check if a StoredProject is assigned to this ClusterNode
-     * @param project project to check
-     * @return  
-     */
-    public boolean isProjectAssigned(StoredProject project){
-        return (project.getClusternode() != null);
-    }
-
-    
-    // Format an XML response
-    private String createXMLResponse(String resultMessage, String statusMessage, int statusCode){
-        StringBuilder s = new StringBuilder();
-        s.append("<?xml version=\"1.0\"?>\n");
-        s.append("<sqo-oss-response service=\"clusternode\">\n");
-        if (resultMessage!=null) {
-            s.append("<result>" + resultMessage + "</result>\n");
-        } else {
-            s.append("<result/>\n");
-        }
-        s.append("<status code=\"" + String.valueOf(statusCode) + "\"");
-        if (statusMessage!=null) {
-            s.append(">" + statusMessage + "</status>\n");
-        } else {
-            s.append("/>\n");
-        }
-        s.append("</sqo-oss-response>\n");
-    	return s.toString();
-    }
-    
-    // send the XML response back to the client
-    private void sendXMLResponse(HttpServletResponse response, int status, String content) throws ServletException, IOException {
-        response.setStatus(status);
-    	response.setContentType("text/xml;charset=UTF-8");
-    	response.getWriter().println(content);
-    	response.flushBuffer();
-    }
-    
-
-    /**
-     * This is the standard HTTP request handler. It maps GET parameters based on 
-     * the mandatory 'action' parameter to misc internal processes.
-     *
-     * The response codes in HTTP are used as follows:
-     * - SC_OK  if the requested action succeeds
-     * - SC_BAD_REQUEST (400) if the request is syntactically incorrect, which in
-     *          this case means that one of the required parameter "action"
-     *          is missing, or projectid is not a long integer.
-     * - SC_NOT_FOUND (404) if the project or clusternode does not exist in the database.
-     * - SC_NOT_IMPLEMENTED if the action type is not supported
-     */
-    @SuppressWarnings("unchecked")
-    public void doGet(HttpServletRequest request, HttpServletResponse response)
-            throws ServletException, IOException {
-    	
-    	String requestedAction = request.getParameter("action");
-
-    	String projectname = request.getParameter("projectname");
-        String projectid = request.getParameter("projectid");
-        String clusternode = request.getParameter("clusternode");
-    	
-        String content;          // holder of complete response output
-        StringBuilder bcontent;  // holder of complete response output
-        
-        StoredProject project;
-        ClusterNode node;
-        
-        // ERROR if no action requested
-        if (requestedAction == null) {
-        	content=createXMLResponse(null, "Unknown action",HttpServletResponse.SC_BAD_REQUEST);
-        	sendXMLResponse(response, HttpServletResponse.SC_BAD_REQUEST,content); 
-           return;
-        }
-        
-        // ERROR if unknown action requested
-        ClusterNodeAction action = null;
-        try {
-            action = ClusterNodeAction.valueOf(requestedAction.toUpperCase());
-        } catch (IllegalArgumentException e) {
-            String errorMessage = "Bad action [" + requestedAction + "]";
-            logger.warn(errorMessage);
-            content=createXMLResponse(null, errorMessage,HttpServletResponse.SC_NOT_IMPLEMENTED);
-            sendXMLResponse(response, HttpServletResponse.SC_NOT_IMPLEMENTED, content);
-            return;
-        }
-        
-          
-        // Perform Actions
-        switch (action){
-         case ASSIGN_PROJECT :
-        	 // valid parameters:
-        	 // projectname : Name of the project to assign.  
-        	 // projectid   : ID of the project to assign. 
-        	 //               Used ONLY if projectname parameter is missing, or projectname not found
-        	 // clusternode : The Clusternode name to which the project will be assigned
-        	 //               If empty, assign it to this clusternode
-        	 // Example: http://localhost:8088/clusternode?action=assign_project&projectname=iTALC&clusternode=sqoserver1
-
-        	 dbs.startDBSession();
-         	 project = StoredProject.getProjectByName(projectname);
-         	 dbs.rollbackDBSession();
-         	 if (project==null) {
-         		 if (projectid!=null)  {
-                     long id = 0;
-                     try {
-                    	 id = Long.valueOf(projectid);
-                     } catch (Exception ex){
-              	    	 content=createXMLResponse(null,"Invalid projectid [" + projectid + "]", HttpServletResponse.SC_BAD_REQUEST);
-            	    	 sendXMLResponse(response, HttpServletResponse.SC_BAD_REQUEST, content);
-            	    	 break;                   	 
-                     }
-                     dbs.startDBSession();
-            		 project = dbs.findObjectById(StoredProject.class, id);
-            		 dbs.rollbackDBSession();
-            		 if (project==null) {
-               	    	content = createXMLResponse(null,"Project with id:" + projectid + " not found", HttpServletResponse.SC_NOT_FOUND);
-            	    	sendXMLResponse(response, HttpServletResponse.SC_NOT_FOUND, content);
-            	    	break;                   	             			 
-            		 }
-         	     } else {
-         	    	content = createXMLResponse(null,"Project " + projectname + " not found", HttpServletResponse.SC_NOT_FOUND);
-        	    	sendXMLResponse(response, HttpServletResponse.SC_NOT_FOUND, content);
-        	    	break;
-         	     }
-         	 }
-         	 
-         	 if (clusternode==null) {
-         	     node = thisNode;	 
-         	 } else {
-         	     dbs.startDBSession();
-         	     node = ClusterNode.getClusteNodeByName(clusternode);
-         	     dbs.rollbackDBSession();
-         	     if (node==null) {
-                     content = createXMLResponse(null,"ClusterNode " + clusternode + " not found", HttpServletResponse.SC_NOT_FOUND);
-                     sendXMLResponse(response, HttpServletResponse.SC_NOT_FOUND, content);
-                     break;         	         
-         	     }
-         	 }
-        	 try {
-        	     if (assignProject(node,project)){
-        	    	content = createXMLResponse(null, "Project " + project.getName() + " assigned to " + node.getName(), HttpServletResponse.SC_OK);
-        	    	sendXMLResponse(response, HttpServletResponse.SC_OK, content);       	    	
-        	     }        	     
-        	 } catch (ClusterNodeActionException ex) {
-     	    	content = createXMLResponse(null, ex.getMessage(), HttpServletResponse.SC_BAD_REQUEST);
-    	    	sendXMLResponse(response, HttpServletResponse.SC_BAD_REQUEST, content);        		 
-        	 }     
-        	 break;
-         case GET_ASSIGNED_PROJECTS:
-        	 // valid parameters:
-        	 // clusternode : The Clusternode name to query for
-        	 //               If empty, assign it to this clusternode
-        	 // Example: http://localhost:8088/clusternode?action=get_assigned_projects&clusternode=sqoserver1
-
-             // TODO: Clustering - Extract interface  
-             if (clusternode==null) {
-           	     node = thisNode;	 
-           	 } else {
-           	     dbs.startDBSession();
-           	     node = ClusterNode.getClusteNodeByName(clusternode);
-           	     dbs.rollbackDBSession();
-           	 }
-         	 if (node==null){
-      	    	content = createXMLResponse(null, "ClusterNode "+clusternode+" not found", HttpServletResponse.SC_NOT_FOUND);
-    	    	sendXMLResponse(response, HttpServletResponse.SC_NOT_FOUND, content);
-    	    	break;
-         	 }
-         	          	 
-             bcontent = new StringBuilder();
-             dbs.startDBSession();
-             Set<StoredProject> assignments = ClusterNode.thisNode().getProjects();
-             if ((assignments!=null) &&  (assignments.size()>0) ){
-                 bcontent.append("\n");
-                 for (StoredProject sp : assignments) {                
-                     bcontent.append("<project id=\"" + sp.getId() + "\"");
-                                          // check if project is currently being updated
-                     // yes/no/unknown, (unknown means that this project is assigned to another clusternode instance)                    
-                     bcontent.append(">" + sp.getName() + "</project>\n");
-                 }
-             }
-             dbs.rollbackDBSession();
-             content = createXMLResponse(bcontent.toString(), "Project list processed succesfuly", HttpServletResponse.SC_OK);
-             sendXMLResponse(response, HttpServletResponse.SC_OK, content);
-        	 break;
-         case GET_KNOWN_SERVERS:
-             // valid parameters: No need for parameters!
-             // Example: http://localhost:8088/clusternode?action=get_known_servers
-             bcontent = new StringBuilder();
-             dbs.startDBSession();
-             List<ClusterNode> nodes = (List<ClusterNode>) dbs.doHQL("FROM ClusterNode",null);
-             if ((nodes!=null) &&  (nodes.size()>0) ){
-                 bcontent.append("\n");
-                 for (ClusterNode cn : nodes) {                
-                     bcontent.append("<clusternode id=\"" + cn.getId() + "\">" + cn.getName() + "</clusternode>\n");
-                 }
-             }
-             dbs.rollbackDBSession();
-             content = createXMLResponse(bcontent.toString(), "Clusternode list processed succesfuly", HttpServletResponse.SC_OK);
-             sendXMLResponse(response, HttpServletResponse.SC_OK, content);
-        	 break;
-         default:
-        	 // you shouldn't be here! - implement missing actions!
-        	 
-        }
-    }
-
-	@Override
 	public void setInitParams(BundleContext bc, Logger l) {
 		this.context = bc;
 		this.logger = l;
 	}
 
-	@Override
 	public void shutDown() {}
 
-	@Override
 	public boolean startUp() {
 		
 		/* Get a reference to the core service*/
@@ -400,7 +113,6 @@ public class ClusterNodeServiceImpl extends HttpServlet implements ClusterNodeSe
       
         core = AlitheiaCore.getInstance();
         dbs = core.getDBService();
-        upds = core.getUpdater();
         if (logger != null) {
             logger.info("Got a valid reference to the logger");
         } else {
@@ -460,5 +172,29 @@ public class ClusterNodeServiceImpl extends HttpServlet implements ClusterNodeSe
 			}
 		}
 		return true;
+	}
+
+	public boolean assignProject(String projectname) throws ClusterNodeActionException {
+		// Default returns false, can be overwritten by subclass
+		return false;
+	}
+
+	public boolean assignProject(ClusterNode node, StoredProject project) throws ClusterNodeActionException {
+		// Default returns false, can be overwritten by subclass
+		return false;
+	}
+
+	public boolean assignProject(StoredProject project) throws ClusterNodeActionException {
+		// Default returns false, can be overwritten by subclass
+		return false;
+	}
+
+	public boolean isProjectAssigned(StoredProject project) {
+		// Default returns false, can be overwritten by subclass
+		return false;
+	}
+
+	public void doGet(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+		// Default does nothing, can be overwritten by subclass
 	}
 }

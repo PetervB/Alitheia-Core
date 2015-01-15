@@ -359,7 +359,8 @@ public abstract class Job implements Comparable<Job> {
      * Return the exception that caused this Job to quit
      * @return An exception object or null if the job has finished normally
      */
-    public final Exception getErrorException() {
+    public Exception getErrorException() {
+    	// No longer final for testing purposes
         return this.m_errorException;
     }
 

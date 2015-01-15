@@ -1,16 +1,18 @@
 package eu.sqooss.plugins.git.test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Properties;
 
 import org.apache.commons.io.FileUtils;
@@ -38,9 +40,6 @@ import eu.sqooss.service.db.StoredProject;
 import eu.sqooss.service.logging.LogManager;
 import eu.sqooss.service.logging.Logger;
 import eu.sqooss.service.tds.AccessorException;
-import eu.sqooss.service.tds.CommitLog;
-import eu.sqooss.service.tds.InvalidProjectRevisionException;
-import eu.sqooss.service.tds.InvalidRepositoryException;
 import eu.sqooss.service.tds.Revision;
 
 public class TestGitUpdater extends TestGitSetup {

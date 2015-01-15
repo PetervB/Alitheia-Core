@@ -36,6 +36,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import eu.sqooss.metrics.contrib.ContributionActions;
 import eu.sqooss.metrics.contrib.ContributionActions.ActionCategory;
@@ -55,13 +56,15 @@ public class ContribAction extends DAObject {
     private long total;
     private Date changedResourceTimestamp;    
 
-    public long getId() {
-        return id;
-    }
+    @Override
+	public long getId() {
+		return id;
+	}
 
-    public void setId(long id) {
-        this.id = id;
-    }
+	@Override
+	public void setId(long id) {
+		this.id = id;
+	}
     
     public Date getChangedResourceTimestamp() {
         return changedResourceTimestamp;
